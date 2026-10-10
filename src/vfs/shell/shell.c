@@ -1045,6 +1045,18 @@ shell_file_store (struct vfs_class *me, vfs_file_handler_t *fh, char *name, char
         if (n == 0)
             break;
 
+        // The remote side waits for exactly s.st_size bytes, so the only way to cancel
+        // is to drop the connection.
+        if (vfs_abort_requested ())
+        {
+            close (h);
+            close (shell_super->sockw);
+            close (shell_super->sockr);
+            shell_super->sockw = -1;
+            shell_super->sockr = -1;
+            ERRNOR (EINTR, -1);
+        }
+
         t = write (shell_super->sockw, buffer, n);
         if (t != n)
         {

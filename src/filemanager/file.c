@@ -188,8 +188,26 @@ static GQueue *erase_list = NULL;
  */
 static GSList *dest_dirs = NULL;
 
+// set when the user aborted while the destination file was being closed (uploaded)
+static gboolean file_close_aborted = FALSE;
+
 /* --------------------------------------------------------------------------------------------- */
 /*** file scope functions ************************************************************************/
+/* --------------------------------------------------------------------------------------------- */
+
+/**
+ * Polled by a VFS while it is uploading the destination file on close.
+ */
+static gboolean
+file_close_abort_check (void *data)
+{
+    FileProgressStatus st = file_progress_check_buttons ((file_op_context_t *) data);
+
+    if (st == FILE_ABORT)
+        file_close_aborted = TRUE;
+    return file_close_aborted;
+}
+
 /* --------------------------------------------------------------------------------------------- */
 
 static void
@@ -2910,8 +2928,17 @@ ret:
         break;
     }
 
+    // Closing the destination of a remote VFS may upload the whole file; keep the Abort button alive
+    file_close_aborted = FALSE;
+    vfs_set_abort_check (file_close_abort_check, ctx);
     while (dest_desc != -1 && mc_close (dest_desc) < 0 && !ctx->ignore_all)
     {
+        if (file_close_aborted)
+        {
+            return_status = FILE_ABORT;
+            dst_status = DEST_SHORT_DELETE;
+            break;
+        }
         temp_status = file_error (ctx, TRUE, _ ("Cannot close target file\n%s"), dst_path);
         if (temp_status == FILE_RETRY)
             continue;
@@ -2920,6 +2947,8 @@ ret:
         return_status = temp_status;
         break;
     }
+
+    vfs_set_abort_check (NULL, NULL);
 
     if (dst_status == DEST_SHORT_QUERY)
     {

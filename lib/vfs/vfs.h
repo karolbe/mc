@@ -254,6 +254,13 @@ void vfs_unregister_class (struct vfs_class *vfs);
 void vfs_setup_work_dir (void);
 
 void vfs_timeout_handler (void);
+
+/* Let a long-running VFS operation (e.g. uploading a file on close) find out that the user wants
+ * to cancel it. The check function is installed by the UI for the duration of the operation. */
+typedef gboolean (*vfs_abort_check_fn) (void *data);
+void vfs_set_abort_check (vfs_abort_check_fn fn, void *data);
+gboolean vfs_abort_requested (void);
+
 int vfs_timeouts (void);
 void vfs_expire (gboolean now);
 

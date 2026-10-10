@@ -1979,6 +1979,12 @@ ftpfs_file_store (struct vfs_class *me, vfs_file_handler_t *fh, char *name, char
         if (n_read == 0)
             break;
 
+        if (vfs_abort_requested ())
+        {
+            me->verrno = EINTR;
+            goto error_return;
+        }
+
         n_stored += n_read;
         w_buf = lc_buffer;
 

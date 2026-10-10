@@ -104,6 +104,9 @@ static vfs_path_t *current_path = NULL;
 static GPtrArray *vfs_openfiles = NULL;
 static long vfs_free_handle_list = -1;
 
+static vfs_abort_check_fn abort_check_fn = NULL;
+static void *abort_check_data = NULL;
+
 /* --------------------------------------------------------------------------------------------- */
 /*** file scope functions ************************************************************************/
 /* --------------------------------------------------------------------------------------------- */
@@ -598,6 +601,23 @@ gboolean
 vfs_file_is_local (const vfs_path_t *vpath)
 {
     return (vfs_file_class_flags (vpath) & VFSF_LOCAL) != 0;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+void
+vfs_set_abort_check (vfs_abort_check_fn fn, void *data)
+{
+    abort_check_fn = fn;
+    abort_check_data = data;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+gboolean
+vfs_abort_requested (void)
+{
+    return abort_check_fn != NULL && abort_check_fn (abort_check_data);
 }
 
 /* --------------------------------------------------------------------------------------------- */
