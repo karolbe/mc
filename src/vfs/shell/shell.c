@@ -108,6 +108,9 @@ int shell_directory_timeout = 900;
 #define WANT_STRING 0x02
 
 /* environment flags */
+// max time to consume the rest of an aborted transfer before dropping the connection
+#define SHELL_ABORT_TIMEOUT (1 * G_USEC_PER_SEC)
+
 #define SHELL_HAVE_HEAD        1
 #define SHELL_HAVE_SED         2
 #define SHELL_HAVE_AWK         4
@@ -1119,28 +1122,45 @@ shell_linear_abort (struct vfs_class *me, vfs_file_handler_t *fh)
 {
     shell_file_handler_t *shell = SHELL_FILE_HANDLER (fh);
     struct vfs_s_super *super = VFS_FILE_HANDLER_SUPER (fh);
+    shell_super_t *shell_super = SHELL_SUPER (super);
     char buffer[BUF_8K];
-    ssize_t n;
+    const gint64 deadline = g_get_monotonic_time () + SHELL_ABORT_TIMEOUT;
 
     vfs_print_message ("%s", _ ("Aborting transfer..."));
 
-    do
+    // The protocol has no way to cancel a running transfer: the rest of the file has to be
+    // consumed. Do that only for a short time; draining a big file over a slow network
+    // would look like a hang, so drop the connection instead.
+    while (shell->total != shell->got)
     {
-        n = MIN ((off_t) sizeof (buffer), (shell->total - shell->got));
-        if (n != 0)
-        {
-            n = read (SHELL_SUPER (super)->sockr, buffer, n);
-            if (n < 0)
-                return;
-            shell->got += n;
-        }
-    }
-    while (n != 0);
+        GPollFD pfd = { .fd = shell_super->sockr, .events = G_IO_IN, .revents = 0 };
+        gint64 left = deadline - g_get_monotonic_time ();
+        ssize_t n;
 
-    if (shell_get_reply (me, SHELL_SUPER (super)->sockr, NULL, 0) != COMPLETE)
+        if (left <= 0 || g_poll (&pfd, 1, (gint) (left / 1000) + 1) <= 0)
+            goto drop;
+
+        n = read (shell_super->sockr, buffer, MIN ((off_t) sizeof (buffer), shell->total - shell->got));
+        if (n <= 0)
+            goto drop;
+        shell->got += n;
+    }
+
+    if (shell_get_reply (me, shell_super->sockr, NULL, 0) != COMPLETE)
         vfs_print_message ("%s", _ ("Error reported after abort."));
     else
         vfs_print_message ("%s", _ ("Aborted transfer would be successful."));
+    return;
+
+drop:
+    vfs_print_message ("%s", _ ("Transfer aborted, connection dropped."));
+    if (shell_super->sockw != -1)
+        close (shell_super->sockw);
+    if (shell_super->sockr != -1)
+        close (shell_super->sockr);
+    shell_super->sockw = -1;
+    shell_super->sockr = -1;
+    shell->got = shell->total;
 }
 
 /* --------------------------------------------------------------------------------------------- */

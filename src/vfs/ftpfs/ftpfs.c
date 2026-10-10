@@ -1544,31 +1544,30 @@ ftpfs_linear_abort (struct vfs_class *me, vfs_file_handler_t *fh)
 
     if (dsock != -1)
     {
-        FD_ZERO (&mask);
-        FD_SET (dsock, &mask);
+        const gint64 start_tim = g_get_monotonic_time ();
 
-        if (select (dsock + 1, &mask, NULL, NULL, NULL) > 0)
+        // flush the remaining data, but never wait for the server longer than ABORT_TIMEOUT
+        while (TRUE)
         {
-            gint64 start_tim;
             char buf[BUF_8K];
+            struct timeval tv;
+            gint64 left = start_tim + ABORT_TIMEOUT - g_get_monotonic_time ();
 
-            start_tim = g_get_monotonic_time ();
-
-            // flush the remaining data
-            while (read (dsock, buf, sizeof (buf)) > 0)
+            if (left <= 0)
             {
-                gint64 tim;
-
-                tim = g_get_monotonic_time ();
-
-                if (tim > start_tim + ABORT_TIMEOUT)
-                {
-                    // server keeps sending, drop the connection and ftpfs_reconnect
-                    close (dsock);
-                    ftpfs_reconnect (me, super);
-                    return;
-                }
+                // server keeps sending or is silent, drop the connection and ftpfs_reconnect
+                close (dsock);
+                ftpfs_reconnect (me, super);
+                return;
             }
+
+            FD_ZERO (&mask);
+            FD_SET (dsock, &mask);
+            tv.tv_sec = left / G_USEC_PER_SEC;
+            tv.tv_usec = left % G_USEC_PER_SEC;
+
+            if (select (dsock + 1, &mask, NULL, NULL, &tv) <= 0 || read (dsock, buf, sizeof (buf)) <= 0)
+                break;
         }
         close (dsock);
     }
